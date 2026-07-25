@@ -1,0 +1,25 @@
+includes:
+  - phpstan-baseline.neon
+  - ../../../.Build/vendor/saschaegerer/phpstan-typo3/extension.neon
+  - ../../../.Build/vendor/phpstan/phpstan-phpunit/extension.neon
+
+parameters:
+  # Use local .cache dir instead of /tmp
+  tmpDir: ../../../.cache/phpstan
+
+  level: 8
+
+  # Doc types must not be trusted 100%, especially for globals and test
+  # assertions verifying the runtime contract. Mirrors the TYPO3 core setting.
+  treatPhpDocTypesAsCertain: false
+
+  # Only the core version aware sources of this core version are analysed, the
+  # ones of the other core version may use API that does not exist here.
+  paths:
+    - ../../../Classes
+    - ../../../Configuration
+    - ../../../Core14
+    - ../../../Tests
+
+  excludePaths:
+    - ../../../Tests/*/Core13/*

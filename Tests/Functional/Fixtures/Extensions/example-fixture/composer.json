@@ -1,0 +1,23 @@
+{
+    "name": "tests/example-fixture",
+    "description": "Fixture extension of the functional test suite.",
+    "type": "typo3-cms-extension",
+    "license": "GPL-2.0-or-later",
+    "version": "1.0.0-dev",
+    "require": {
+        "typo3/cms-core": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "TESTS\\ExampleFixture\\": "Classes/"
+        }
+    },
+    "extra": {
+        "typo3/cms": {
+            "extension-key": "tests_example_fixture",
+            "Package": {
+                "providesPackages": []
+            }
+        }
+    }
+}

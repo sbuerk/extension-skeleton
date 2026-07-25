@@ -1,0 +1,135 @@
+name: "Pull request comment"
+
+# Posts a single, updated-in-place comment on a pull request linking the
+# documentation rendered by "ci.yml".
+#
+# Why this is a separate workflow, and not a step in "ci.yml":
+#
+# A pull request from a **fork** gets a read-only GITHUB_TOKEN and no secrets —
+# GitHub does that on purpose, because the workflow runs code from the fork.
+# Commenting needs "pull-requests: write", so a comment step inside "ci.yml"
+# would work for branches in this repository and silently fail for exactly the
+# contributors it is meant to serve.
+#
+# The "workflow_run" event is the documented way out: it fires when another
+# workflow finishes, runs in the context of the **default branch** of this
+# repository — not the fork — and its token can write even though the token of
+# the run that triggered it could not. No code from the pull request is checked
+# out or executed here, which is what makes granting write permission safe.
+#
+# For the same reason "pull_request_target" is **not** used: it also has a write
+# token, but running the pull request's own code under it is a documented way to
+# leak write access and secrets.
+#
+# Two consequences of the "workflow_run" event worth knowing:
+#
+#   1. This file only has an effect once it is on the default branch. Changing
+#      it in a pull request does not change the behaviour of that pull request.
+#   2. "github.event.workflow_run.pull_requests" is empty for a fork, so the
+#      pull request number cannot be read from the event. "ci.yml" writes it
+#      into the "pull-request-context" artifact, which this workflow reads.
+#
+# → https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+
+on:
+  workflow_run:
+    workflows: [ "CI" ]
+    types: [ "completed" ]
+
+permissions:
+  contents: read
+  # Needed to list and download the artifacts of the run that triggered this.
+  actions: read
+  pull-requests: write
+
+# Grouped by the branch the pull request comes from, not by the run, so two
+# pushes in quick succession update the comment one after the other instead of
+# racing. Not cancelled: the point is that the last run wins, and a cancelled
+# run would leave the comment describing an older commit.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}"
+  cancel-in-progress: false
+
+jobs:
+
+  comment:
+    name: "rendered documentation"
+    # Only for runs that belong to a pull request — "ci.yml" also runs on
+    # workflow_dispatch, where there is nothing to comment on.
+    if: "github.event.workflow_run.event == 'pull_request'"
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: "Download the pull request context"
+        id: "context"
+        # The artifact is missing when the run was cancelled before the
+        # documentation job started. That is not a failure of this workflow.
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: "pull-request-context"
+          path: "pull-request-context"
+          run-id: "${{ github.event.workflow_run.id }}"
+          github-token: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: "Create or update the comment"
+        if: "steps.context.outcome == 'success'"
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Identifies the comment this workflow owns, so it is updated
+            // rather than a new one added for every push.
+            const marker = '<!-- rendered-documentation -->';
+            const contextFile = 'pull-request-context/number';
+
+            if (!fs.existsSync(contextFile)) {
+              core.info('No pull request context in the artifact, nothing to comment.');
+              return;
+            }
+
+            const pullRequest = Number.parseInt(fs.readFileSync(contextFile, 'utf8').trim(), 10);
+            if (!Number.isInteger(pullRequest) || pullRequest <= 0) {
+              core.setFailed('The pull request context does not contain a usable number.');
+              return;
+            }
+
+            const run = context.payload.workflow_run;
+            const { owner, repo } = context.repo;
+
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id: run.id,
+            });
+            const documentation = artifacts.find((artifact) => artifact.name === 'documentation');
+
+            const body = [
+              marker,
+              '### Rendered documentation',
+              '',
+              documentation && !documentation.expired
+                ? `[Download the rendered documentation](https://github.com/${owner}/${repo}/actions/runs/${run.id}/artifacts/${documentation.id})`
+                  + ' — unpack it and open `Index.html`.'
+                : 'No documentation artifact for this run.'
+                  + ' It is built by the `documentation` job of the CI workflow, and kept for five days.',
+              '',
+              `<sub>Commit ${run.head_sha.substring(0, 7)} · [CI run #${run.run_number}](${run.html_url})</sub>`,
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pullRequest,
+            });
+            const existing = comments.find((comment) => comment.body && comment.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              core.info(`Updated comment ${existing.id} on pull request ${pullRequest}.`);
+              return;
+            }
+
+            await github.rest.issues.createComment({ owner, repo, issue_number: pullRequest, body });
+            core.info(`Created a comment on pull request ${pullRequest}.`);

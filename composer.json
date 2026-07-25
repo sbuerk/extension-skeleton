@@ -1,0 +1,91 @@
+{
+    "name": "sbuerk/extension-skeleton",
+    "description": "TYPO3 CMS extension extension_skeleton.",
+    "type": "typo3-cms-extension",
+    "homepage": "https://github.com/sbuerk/extension-skeleton",
+    "support": {
+        "issues": "https://github.com/sbuerk/extension-skeleton/issues",
+        "source": "https://github.com/sbuerk/extension-skeleton"
+    },
+    "license": "GPL-2.0-or-later",
+    "keywords": [
+        "typo3",
+        "typo3-cms-extension"
+    ],
+    "authors": [
+        {
+            "name": "sbuerk"
+        }
+    ],
+    "require": {
+        "php": "^8.2 || ^8.3 || ^8.4 || ^8.5",
+        "typo3/cms-core": "^13.4 || ^14.3"
+    },
+    "require-dev": {
+        "fgtclb/environment-state-manager": "^2.0.1",
+        "friendsofphp/php-cs-fixer": "^3.95.15",
+        "nikic/php-parser": "^5.4.0",
+        "phpstan/phpstan": "^2.2.5",
+        "phpstan/phpstan-phpunit": "^2.0.18",
+        "phpunit/phpunit": "^11.5.56",
+        "saschaegerer/phpstan-typo3": "^2.1.1 || ^3.0.1",
+        "sbuerk/fixture-packages": "^1.1.3",
+        "sbuerk/typo3-site-based-test-trait": "^2.0.1 || ^3.0.0",
+        "typo3/testing-framework": "^9.6.1"
+    },
+    "config": {
+        "allow-plugins": {
+            "php-http/discovery": true,
+            "sbuerk/fixture-packages": true,
+            "typo3/class-alias-loader": true,
+            "typo3/cms-composer-installers": true
+        },
+        "bin-dir": ".Build/bin",
+        "sort-packages": true,
+        "vendor-dir": ".Build/vendor",
+        "audit": {
+            "block-insecure": false,
+            "block-abandoned": false
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "SBUERK\\ExtensionSkeleton\\": "Classes/",
+            "SBUERK\\ExtensionSkeleton\\Core13\\": "Core13/",
+            "SBUERK\\ExtensionSkeleton\\Core14\\": "Core14/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "SBUERK\\ExtensionSkeleton\\Tests\\": "Tests/"
+        }
+    },
+    "scripts": {
+        "cgl:fix": "Build/Scripts/runTests.sh -s cgl",
+        "cgl:check": "Build/Scripts/runTests.sh -s cgl -n",
+        "phpstan": "Build/Scripts/runTests.sh -s phpstan",
+        "test:unit": "Build/Scripts/runTests.sh -s unit",
+        "test:functional": "Build/Scripts/runTests.sh -s functional",
+        "docs": "Build/Scripts/runTests.sh -s renderDocumentation"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "1.0.x-dev"
+        },
+        "sbuerk/fixture-packages": {
+            "paths": {
+                "Tests/Functional/Fixtures/Extensions/*": [
+                    "autoload"
+                ]
+            }
+        },
+        "typo3/cms": {
+            "extension-key": "extension_skeleton",
+            "web-dir": ".Build/Web",
+            "version": "1.0.0-dev",
+            "Package": {
+                "providesPackages": []
+            }
+        }
+    }
+}

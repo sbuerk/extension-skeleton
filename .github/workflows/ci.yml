@@ -1,0 +1,318 @@
+name: "CI"
+
+# Everything that runs for a pull request: quality gates, linting, unit tests,
+# functional tests against every supported DBMS, and the rendered documentation.
+#
+# One workflow rather than one per core version. The core version is a matrix
+# dimension, which keeps a single place to add v15 later and makes the
+# dependencies between the stages expressible — they cannot cross workflows.
+#
+# Staging, cheapest and most likely to fail first:
+#
+#   quality ─┐
+#   phpstan ─┤
+#   lint    ─┼─> unit ─> functional (SQLite) ─> functional (MySQL, MariaDB, …)
+#            │
+#   docs ────┘  (independent, for fast feedback on documentation changes)
+#
+# The DBMS matrix is the expensive part — 16 jobs, each starting a database
+# container — so it only runs once the same tests have passed on SQLite for both
+# core versions and both edge PHP versions. A failure that is not DBMS specific
+# is then reported by 4 jobs instead of 20.
+#
+# Supported versions are declared in the matrices below. There are three PHP
+# sets, and they have to be changed together:
+#
+#   all edges  PHP versions      Used by
+#   ---------  ----------------  -------------------------------------------
+#   all        8.2 8.3 8.4 8.5   lint
+#   edges      8.2 8.5           unit, functional
+#   lowest     8.2               quality, phpstan
+#
+# Only the lowest PHP version is used for the gates that do not depend on it,
+# because running them once per PHP version tests the same files again.
+#
+# Every step goes through "Build/Scripts/runTests.sh", so a gate behaves
+# identically here and on a developer machine — see
+# "docs/development/quality-gates.md".
+#
+# Every step also passes "-b docker". The script prefers podman whenever it is
+# present and only falls back to docker, which is the right default for it — but
+# GitHub hosted runners ship both, and their podman/crun combination has been
+# observed to abort the first container start of a job with
+# "OCI runtime error: crun: unknown version specified" (exit 126). It is
+# intermittent, hits any job, and is caused by neither the runner image nor the
+# testing image changing. Selecting docker here avoids crun entirely and leaves
+# the script default and every local run untouched. Drop the flag once GitHub
+# stops producing the mismatch.
+#
+# The composer download cache is restored per PHP and core version. It lives in
+# ".cache/" at the repository root and **must not** be moved under ".Build/":
+# "composerUpdate" starts with "rm -rf .Build", so a cache stored there would be
+# deleted before composer ever reads it — still saved at the end of every job,
+# but never used, which makes the whole cache step a silent no-op.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege. Nothing in this workflow writes, and it must stay that way:
+# a pull request from a fork gets a read-only token anyway, so a write step here
+# would work for branches and silently fail for external contributors.
+# Commenting on the pull request happens in "pr-comment.yml" instead.
+permissions:
+  contents: read
+
+# Superseded runs of the same pull request are pointless, and this workflow is
+# not cheap. Pushing twice in a minute cancels the first run.
+concurrency:
+  group: "${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+
+  quality:
+    name: "quality (v${{ matrix.typo3 }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # These gates inspect source files, not the installed core, so one
+        # dependency set is enough. The lowest supported one is used.
+        php-version: [ "8.2" ]
+        typo3: [ "13" ]
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+
+      - name: "Cache composer downloads"
+        uses: actions/cache@v6
+        with:
+          path: ".cache/composer"
+          key: "composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-${{ hashFiles('composer.json') }}"
+          restore-keys: |
+            composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-
+            composer-${{ matrix.php-version }}-
+
+      - name: "Prepare dependencies for TYPO3 v${{ matrix.typo3 }}"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s composerUpdate"
+
+      - name: "Validate composer.json"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s composerValidate"
+
+      - name: "CGL"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s cgl -n"
+
+      - name: "Ensure UTF-8 files do not contain BOM"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s checkBom"
+
+      - name: "Find duplicate exception codes"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s checkExceptionCodes"
+
+      - name: "Ensure markdown tables are formatted"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s checkMarkdownTables"
+
+      - name: "Ensure the repository initialization rewrites all identifiers"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s checkRepositoryInitialization"
+
+      - name: "Ensure test methods do not start with \"test\""
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s checkTestMethodsPrefix"
+
+  phpstan:
+    name: "phpstan (v${{ matrix.typo3 }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The only gate configured per core version: each configuration analyses
+        # its own "Core13/" or "Core14/" sources against the core installed for
+        # it. Running it for one version would miss half the code.
+        php-version: [ "8.2" ]
+        typo3: [ "13", "14" ]
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+
+      - name: "Cache composer downloads"
+        uses: actions/cache@v6
+        with:
+          path: ".cache/composer"
+          key: "composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-${{ hashFiles('composer.json') }}"
+          restore-keys: |
+            composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-
+            composer-${{ matrix.php-version }}-
+
+      - name: "Prepare dependencies for TYPO3 v${{ matrix.typo3 }}"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s composerUpdate"
+
+      - name: "Static code analyzer"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s phpstan"
+
+  lint:
+    name: "lint (v${{ matrix.typo3 }}, PHP ${{ matrix.php-version }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: [ "8.2", "8.3", "8.4", "8.5" ]
+        typo3: [ "13", "14" ]
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+
+      - name: "Cache composer downloads"
+        uses: actions/cache@v6
+        with:
+          path: ".cache/composer"
+          key: "composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-${{ hashFiles('composer.json') }}"
+          restore-keys: |
+            composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-
+            composer-${{ matrix.php-version }}-
+
+      - name: "Prepare dependencies for TYPO3 v${{ matrix.typo3 }}"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s composerUpdate"
+
+      - name: "Run PHP lint"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s lintPhp"
+
+  unit:
+    name: "unit (v${{ matrix.typo3 }}, PHP ${{ matrix.php-version }})"
+    runs-on: ubuntu-latest
+    needs: [ "quality", "phpstan", "lint" ]
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: [ "8.2", "8.5" ]
+        typo3: [ "13", "14" ]
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+
+      - name: "Cache composer downloads"
+        uses: actions/cache@v6
+        with:
+          path: ".cache/composer"
+          key: "composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-${{ hashFiles('composer.json') }}"
+          restore-keys: |
+            composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-
+            composer-${{ matrix.php-version }}-
+
+      - name: "Prepare dependencies for TYPO3 v${{ matrix.typo3 }}"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s composerUpdate"
+
+      - name: "Execute unit tests"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s unit"
+
+      - name: "Execute unit tests in random order"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s unitRandom"
+
+  functional-sqlite:
+    name: "functional sqlite (v${{ matrix.typo3 }}, PHP ${{ matrix.php-version }})"
+    runs-on: ubuntu-22.04
+    needs: [ "unit" ]
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: [ "8.2", "8.5" ]
+        typo3: [ "13", "14" ]
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+
+      - name: "Cache composer downloads"
+        uses: actions/cache@v6
+        with:
+          path: ".cache/composer"
+          key: "composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-${{ hashFiles('composer.json') }}"
+          restore-keys: |
+            composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-
+            composer-${{ matrix.php-version }}-
+
+      - name: "Prepare dependencies for TYPO3 v${{ matrix.typo3 }}"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s composerUpdate"
+
+      - name: "Execute functional tests with SQLite"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -d sqlite -s functional"
+
+  functional-dbms:
+    name: "functional ${{ matrix.dbms.name }} ${{ matrix.dbms.version }} (v${{ matrix.typo3 }}, PHP ${{ matrix.php-version }})"
+    runs-on: ubuntu-22.04
+    # Only after the same tests passed on SQLite for every core and edge PHP
+    # version. A defect that is not DBMS specific never reaches these 16 jobs.
+    needs: [ "functional-sqlite" ]
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: [ "8.2", "8.5" ]
+        typo3: [ "13", "14" ]
+        dbms:
+          - { name: "mysql", version: "8.0" }
+          - { name: "mariadb", version: "10.4" }
+          - { name: "mariadb", version: "10.6" }
+          - { name: "postgres", version: "10" }
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+
+      - name: "Cache composer downloads"
+        uses: actions/cache@v6
+        with:
+          path: ".cache/composer"
+          key: "composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-${{ hashFiles('composer.json') }}"
+          restore-keys: |
+            composer-${{ matrix.php-version }}-v${{ matrix.typo3 }}-
+            composer-${{ matrix.php-version }}-
+
+      - name: "Prepare dependencies for TYPO3 v${{ matrix.typo3 }}"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -s composerUpdate"
+
+      - name: "Execute functional tests with ${{ matrix.dbms.name }} ${{ matrix.dbms.version }}"
+        run: "Build/Scripts/runTests.sh -b docker -t ${{ matrix.typo3 }} -p ${{ matrix.php-version }} -d ${{ matrix.dbms.name }} -i ${{ matrix.dbms.version }} -s functional"
+
+  documentation:
+    name: "documentation"
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+
+      # Recorded and uploaded *before* the rendering, so the comment workflow can
+      # report on the right pull request even when the rendering fails.
+      # "github.event.workflow_run.pull_requests" is empty for a fork, which is
+      # why the number travels in an artifact rather than being read from the
+      # event.
+      - name: "Record the pull request number"
+        if: "github.event_name == 'pull_request'"
+        run: |
+          mkdir -p .Build/pull-request-context
+          echo "${{ github.event.pull_request.number }}" > .Build/pull-request-context/number
+
+      - name: "Upload the pull request context"
+        if: "github.event_name == 'pull_request'"
+        uses: actions/upload-artifact@v6
+        with:
+          name: "pull-request-context"
+          path: ".Build/pull-request-context/"
+          if-no-files-found: "error"
+          retention-days: 5
+
+      - name: "Render documentation"
+        run: "Build/Scripts/runTests.sh -b docker -s renderDocumentation"
+
+      - name: "Upload rendered documentation"
+        uses: actions/upload-artifact@v6
+        with:
+          name: "documentation"
+          path: "Documentation-GENERATED-temp/"
+          compression-level: 9
+          if-no-files-found: "error"
+          retention-days: 5
+          include-hidden-files: true
+          overwrite: true

@@ -1,0 +1,6 @@
+"tx_examplefixture_domain_model_greeting",,,,,,
+,"uid","pid","sys_language_uid","l10n_parent","l10n_source","title","message"
+,1,1,0,0,0,"Greeting one","Hello"
+,2,1,0,0,0,"Greeting two","Hello again"
+,3,1,1,1,1,"Gruss eins","Hallo"
+,4,1,2,1,1,"Salutation un","Bonjour"

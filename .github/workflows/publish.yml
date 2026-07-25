@@ -1,0 +1,104 @@
+name: publish
+
+# Turns a version tag into a GitHub release with a TER upload artifact attached,
+# and — once enabled at the bottom of this file — publishes that artifact to the
+# TYPO3 Extension Repository.
+#
+# Triggered by pushing a tag. The tag has to be a bare "MAJOR.MINOR.PATCH"
+# without a "v" prefix, which is what "Build/Scripts/release.sh" creates, and it
+# has to match the version in "ext_emconf.php" — "tailor create-artefact" fails
+# otherwise, on purpose, so a release cannot disagree with the extension
+# metadata.
+#
+# The extension key is read from "composer.json" at runtime rather than written
+# into this file. Workflow files are the one thing
+# "Build/Scripts/initializeRepository.sh" never rewrites, because the
+# GITHUB_TOKEN of an Actions run may not update files below ".github/workflows/",
+# so an identifier hardcoded here would survive into every repository created
+# from this template.
+#
+# Requirements before the first release:
+#
+#   - The repository secret "TYPO3_API_TOKEN" for the TER publishing step.
+#   - The extension key registered in the TER, owned by that token.
+#
+# → "docs/workflow/releasing.md"
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  publish:
+    name: Ensure GitHub Release with extension TER artifact
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    env:
+      TYPO3_API_TOKEN: ${{ secrets.TYPO3_API_TOKEN }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Verify tag
+        run: |
+          if ! [[ ${{ github.ref }} =~ ^refs/tags/[0-9]{1,3}.[0-9]{1,3}.[0-9]{1,3}$ ]]; then
+            echo "ERR: Invalid publish version tag: ${{ github.ref }}"
+            exit 1
+          fi
+
+      - name: Get version
+        id: get-version
+        run: echo "version=${GITHUB_REF/refs\/tags\//}" >> "$GITHUB_ENV"
+
+      - name: Get extension key
+        id: get-extension-key
+        run: |
+          echo "DETECTED_EXTENSION_KEY=$(cat composer.json | jq -r '.extra."typo3/cms"."extension-key"' )" >> "$GITHUB_ENV"
+
+      - name: Get comment
+        id: get-comment
+        run: |
+          {
+            echo 'terReleaseNotes<<EOF'
+            echo "https://github.com/${{ github.repository }}/releases/tag/${{ env.version }}"
+            echo EOF
+          } >> "$GITHUB_ENV"
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.2
+          extensions: intl, mbstring, json, zip, curl
+          tools: composer:v2
+
+      - name: Install tailor
+        run: composer global require typo3/tailor --prefer-dist --no-progress --no-suggest
+
+      # Note that step will fail when `env.version` does not match the `ext_emconf.php` version.
+      - name: Create local TER package upload artifact
+        run: |
+          php ~/.composer/vendor/bin/tailor create-artefact ${{ env.version }}
+
+      # Note that when release already exists for tag, only files will be uploaded and lets this acting as a
+      # fallback to ensure that a real GitHub release is created for the tag along with extension artifacts.
+      - name: Create release and upload artifacts in the same step
+        uses: softprops/action-gh-release@v3
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: "[RELEASE] ${{ env.version }}"
+          generate_release_notes: true
+          files: |
+            tailor-version-artefact/${{ env.DETECTED_EXTENSION_KEY }}_${{ env.version }}.zip
+            LICENSE
+          fail_on_unmatched_files: true
+
+      # @todo Enable the TER publishing as soon as the extension is public and
+      #       its extension key is registered in the TER. The `TYPO3_API_TOKEN`
+      #       repository secret must be set up for it.
+      #- name: Publish to TER
+      #  run: |
+      #    php ~/.composer/vendor/bin/tailor ter:publish --comment "${{ env.terReleaseNotes }}" ${{ env.version }} \
+      #      --artefact=tailor-version-artefact/${{ env.DETECTED_EXTENSION_KEY }}_${{ env.version }}.zip

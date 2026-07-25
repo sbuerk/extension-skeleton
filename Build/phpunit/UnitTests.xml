@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+<!--
+    PHPUnit configuration of the unit test suite.
+
+    Derived from the boilerplate shipped with typo3/testing-framework in
+    "Resources/Core/Build/UnitTests.xml", baselined from version 9.6.1.
+    Re-check it against that file when the testing-framework is updated.
+
+    Deliberate deviations from the boilerplate:
+
+    * The test suite points to this extension's "Tests/Unit/" directory.
+    * The schema location points to the locally installed phpunit.xsd instead
+      of the one on schema.phpunit.de, so that validation matches the
+      installed PHPUnit version and works without network access.
+    * Strictness is raised: notices, warnings, deprecations, PHPUnit
+      deprecations, PHPUnit warnings, risky tests, incomplete tests, tests
+      without assertions, output during tests, changes to global state and an
+      empty test suite all fail the run.
+
+    "failOnSkipped" is disabled on purpose. "Build/Scripts/runTests.sh"
+    excludes the group "not-core-<version>", so tests which cannot run on the
+    selected TYPO3 version are skipped instead of failing the run.
+
+    Unit tests extend \TYPO3\TestingFramework\Core\Unit\UnitTestCase, take a
+    look at this class for further documentation on how to run the suite.
+
+    The suite also needs phpunit bootstrap code, the file is located next to
+    this .xml as UnitTestsBootstrap.php.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="../../.Build/vendor/phpunit/phpunit/phpunit.xsd"
+         backupGlobals="true"
+         beStrictAboutChangesToGlobalState="true"
+         beStrictAboutOutputDuringTests="true"
+         bootstrap="UnitTestsBootstrap.php"
+         cacheDirectory=".phpunit.cache"
+         cacheResult="false"
+         colors="true"
+         displayDetailsOnIncompleteTests="true"
+         displayDetailsOnPhpunitDeprecations="true"
+         displayDetailsOnSkippedTests="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnTestsThatTriggerErrors="true"
+         displayDetailsOnTestsThatTriggerNotices="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         failOnDeprecation="true"
+         failOnEmptyTestSuite="true"
+         failOnIncomplete="true"
+         failOnNotice="true"
+         failOnPhpunitDeprecation="true"
+         failOnPhpunitWarning="true"
+         failOnRisky="true"
+         failOnSkipped="false"
+         failOnWarning="true"
+         requireCoverageMetadata="false"
+>
+    <testsuites>
+        <testsuite name="Unit tests">
+            <directory>../../Tests/Unit/</directory>
+        </testsuite>
+    </testsuites>
+    <php>
+        <ini name="display_errors" value="1"/>
+        <env name="TYPO3_CONTEXT" value="Testing"/>
+    </php>
+</phpunit>

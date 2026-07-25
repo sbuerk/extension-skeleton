@@ -1,0 +1,76 @@
+name: "Initialize repository"
+
+# Runs once for a repository created from this template repository and rewrites
+# the identifiers inherited from the template — composer package name, TYPO3
+# extension key, PHP namespaces and the extension title — to the ones derived
+# from the new "<owner>/<repository>" reference.
+#
+# Creating a repository from a template does not fire a dedicated event, so
+# every candidate trigger is used. The job is idempotent: the initialization
+# script does nothing when the repository is already initialized, and the
+# workflow only commits when the working tree actually changed. Pushes made
+# with GITHUB_TOKEN do not trigger workflows, so this cannot loop.
+#
+# This runs on the runner rather than in a container: it needs "git" and a
+# writable checkout, and "Build/Scripts/initializeRepository.sh" needs only php,
+# awk and the usual shell tools, all of which the runner image provides.
+#
+# The rewrite itself is covered by the "checkRepositoryInitialization" quality
+# gate, which runs the same script against a throwaway copy of the working tree
+# under several repository names — see "docs/development/quality-gates.md". This
+# workflow is therefore about the plumbing around it, not about whether the
+# identifiers come out right.
+on:
+  create:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+
+  initialize:
+    name: "initialize repository"
+    # Never run on the template repository itself.
+    if: "!github.event.repository.is_template"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+
+      - name: "Checkout"
+        uses: actions/checkout@v6
+        with:
+          ref: "${{ github.event.repository.default_branch }}"
+
+      # Rewrites the identifiers and applies the coding guidelines to the
+      # result, because renaming the PHP namespace can change the alphabetical
+      # order of the "use" statements.
+      #
+      # "--container-bin=docker" is handed to "runTests.sh" for that last step.
+      # The script prefers podman whenever it is present, and the podman/crun
+      # combination of GitHub hosted runners has been observed to abort the
+      # first container start with "crun: unknown version specified" — see the
+      # header of "ci.yml". This job gets one shot per repository, so it uses
+      # the runtime that works there.
+      - name: "Initialize the repository"
+        run: "Build/Scripts/initializeRepository.sh '${{ github.repository }}' --container-bin=docker"
+
+      - name: "Check for changes"
+        id: changes
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Repository is already initialized, nothing to commit."
+          fi
+
+      - name: "Commit and push"
+        if: "steps.changes.outputs.changed == 'true'"
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "[TASK] Adjust repository"
+          git push

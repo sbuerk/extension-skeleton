@@ -1,0 +1,13 @@
+"pages",,,,,,,,,
+,"uid","pid","sys_language_uid","l10n_parent","l10n_source","doktype","is_siteroot","title","slug"
+,1,0,0,0,0,1,1,"EN: Home","/"
+,2,0,1,1,1,1,0,"DE: Startseite","/"
+,3,0,2,1,1,1,0,"FR: Accueil","/"
+,10,1,0,0,0,1,0,"EN: Hello","/hello"
+,11,1,1,10,10,1,0,"DE: Hallo","/hallo"
+,12,1,2,10,10,1,0,"FR: Bonjour","/bonjour"
+"tt_content",,,,,,,,,
+,"uid","pid","sys_language_uid","l18n_parent","l10n_source","colPos","CType","header",
+,1,10,0,0,0,0,"testsexamplefixture_hello","EN: Hello plugin",
+,2,10,1,1,1,0,"testsexamplefixture_hello","DE: Hallo Plugin",
+,3,10,2,1,1,0,"testsexamplefixture_hello","FR: Bonjour plugin",
